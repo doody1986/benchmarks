@@ -42,6 +42,8 @@ import datasets
 import model_config
 import variable_mgr
 
+import sparsity_util
+
 tf.flags.DEFINE_string('model', 'trivial', 'name of the model to run')
 
 # The code will first check if it's running under benchmarking mode
@@ -783,11 +785,13 @@ class BenchmarkCNN(object):
     for device_num in range(len(self.devices)):
       with self.variable_mgr.create_outer_variable_scope(
           device_num), tf.name_scope('tower_%i' % device_num) as name_scope:
-        results = self.add_forward_pass_and_gradients(
+        results, tensor_list = self.add_forward_pass_and_gradients(
             images_splits[device_num], labels_splits[device_num], nclass,
             phase_train, device_num, input_data_type, data_type, input_nchan,
             use_synthetic_gpu_images, gpu_copy_stage_ops, gpu_compute_stage_ops,
             gpu_grad_stage_ops)
+        sparsity_util.add_sparsity_summary_gradients(results['loss'],
+            tensor_list)
         if phase_train:
           losses.append(results['loss'])
           device_grads.append(results['gradvars'])
@@ -839,10 +843,10 @@ class BenchmarkCNN(object):
 
     training_ops = []
     for d, device in enumerate(apply_gradient_devices):
+      print(device)
       with tf.device(device):
         total_loss = tf.reduce_mean(losses)
         avg_grads = self.variable_mgr.get_gradients_to_apply(d, gradient_state)
-
         gradient_clip = FLAGS.gradient_clip
         learning_rate = self.model.get_learning_rate(
             global_step, self.batch_size)
@@ -881,6 +885,8 @@ class BenchmarkCNN(object):
 
         self.variable_mgr.append_apply_gradients_ops(
             gradient_state, opt, clipped_grads, training_ops)
+        for var in tf.trainable_variables():
+          sparsity_util.add_sparsity_summary(var)
     train_op = tf.group(*(training_ops + update_ops + extra_nccl_ops))
 
     with tf.device(self.cpu_device):
@@ -996,7 +1002,7 @@ class BenchmarkCNN(object):
       gradvars = list(zip(grads, param_refs))
       results['loss'] = loss
       results['gradvars'] = gradvars
-      return results
+      return results, network.tensor_list_for_sparsity_analysis
 
   def get_image_preprocessor(self):
     """Returns the image preprocessor to used, based on the model.

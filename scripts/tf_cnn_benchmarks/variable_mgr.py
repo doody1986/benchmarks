@@ -23,7 +23,7 @@ import operator
 
 import tensorflow as tf
 
-from tensorflow.contrib import nccl
+#from tensorflow.contrib import nccl
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import data_flow_ops
 
