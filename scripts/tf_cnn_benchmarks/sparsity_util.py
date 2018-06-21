@@ -27,11 +27,12 @@ def add_sparsity_summary(x):
   Args:
     x: Tensor
   Returns:
-    nothing
+    sparsity: Tensor
   """
   tensor_name = x.op.name
-  tf.summary.scalar(tensor_name + '/sparsity', tf.nn.zero_fraction(x))
-
+  sparsity = tf.nn.zero_fraction(x)
+  tf.summary.scalar(tensor_name + '/sparsity', sparsity)
+  return sparsity
 
 def add_sparsity_summary_gradients(loss, x_list):
   """Helper to create summaries for gradients of intermediate results in
@@ -44,13 +45,20 @@ def add_sparsity_summary_gradients(loss, x_list):
     loss: the loss
     x_list: a list of Tensors
   Returns:
-    nothing
+    a list of sparsity of gradients
   """
   gradient_list = tf.gradients(loss, x_list)
+  sparsity_list = []
   for g in gradient_list:
     # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
     # session. This helps the clarity of presentation on tensorboard.
     tensor_name = g.op.name
-    tf.summary.scalar(tensor_name + '/sparsity', tf.nn.zero_fraction(g))
-
+    sparsity = tf.nn.zero_fraction(g)
+    tf.summary.scalar(tensor_name + '/sparsity', sparsity)
+    sparsity_list.append(sparsity)
+  grad_retrieve_list = []
+  for i in range(len(gradient_list)):
+    grad_retrieve_list.append(gradient_list[i])
+    grad_retrieve_list.append(sparsity_list[i])
+  return grad_retrieve_list
 

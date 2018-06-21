@@ -43,6 +43,9 @@ import model_config
 import variable_mgr
 
 import sparsity_util
+import monitor_util
+
+import numpy as np
 
 tf.flags.DEFINE_string('model', 'trivial', 'name of the model to run')
 
@@ -212,6 +215,16 @@ tf.flags.DEFINE_string('result_storage', None,
                        'cbuild_benchmark_datastore' means results will be stored
                        in cbuild datastore (note: this option requires special
                        pemissions and meant to be used from cbuilds).""")
+tf.app.flags.DEFINE_integer('monitor_interval', 10,
+                           """The interval of monitoring sparsity""")
+tf.app.flags.DEFINE_float('sparsity_threshold', 0.6,
+                           """The threshold of sparsity to enable monitoring""")
+tf.app.flags.DEFINE_boolean('log_animation', False,
+                           """Weather or not log the animation for tracking
+                           the change of spatial pattern""")
+tf.app.flags.DEFINE_integer('batch_idx', 0,
+                           """The batch index to extract the feature map""")
+
 FLAGS = tf.flags.FLAGS
 
 log_fn = print   # tf.logging.info
@@ -543,6 +556,11 @@ class BenchmarkCNN(object):
     self.image_preprocessor = self.get_image_preprocessor()
     self.init_global_step = 0
 
+    self.sparsity_monitor = monitor_util.SparsityMonitor(FLAGS.monitor_interval,\
+                                         FLAGS.sparsity_threshold,\
+                                         FLAGS.log_animation,\
+                                         FLAGS.batch_idx)
+
   def print_info(self):
     """Print basic information."""
     log_fn('Model:       %s' % self.model.get_model())
@@ -575,7 +593,7 @@ class BenchmarkCNN(object):
 
   def _eval_cnn(self):
     """Evaluate the model from a checkpoint using validation dataset."""
-    (enqueue_ops, fetches) = self._build_model()
+    (enqueue_ops, fetches, _) = self._build_model()
     saver = tf.train.Saver(self.variable_mgr.savable_variables())
     summary_writer = tf.summary.FileWriter(FLAGS.eval_dir,
                                            tf.get_default_graph())
@@ -618,7 +636,7 @@ class BenchmarkCNN(object):
 
   def _benchmark_cnn(self):
     """Run cnn in benchmark mode. When forward_only on, it forwards CNN."""
-    (enqueue_ops, fetches) = self._build_model()
+    (enqueue_ops, fetches, retrieve_list) = self._build_model()
     fetches_list = nest.flatten(list(fetches.values()))
     main_fetch_group = tf.group(*fetches_list)
     execution_barrier = None
@@ -719,9 +737,11 @@ class BenchmarkCNN(object):
           fetch_summary = summary_op
         else:
           fetch_summary = None
+        self.sparsity_monitor.before(sess)
         summary_str = benchmark_one_step(
             sess, fetches, local_step, self.batch_size, step_train_times,
             self.trace_filename, fetch_summary)
+        self.sparsity_monitor.after(retrieve_list)
         if summary_str is not None and is_chief:
           sv.summary_computed(sess, summary_str)
         local_step += 1
@@ -781,17 +801,25 @@ class BenchmarkCNN(object):
 
     update_ops = None
     staging_delta_ops = []
+    retrieve_list = []
 
     for device_num in range(len(self.devices)):
       with self.variable_mgr.create_outer_variable_scope(
           device_num), tf.name_scope('tower_%i' % device_num) as name_scope:
-        results, tensor_list = self.add_forward_pass_and_gradients(
+        results, tensor_list, sparsities = self.add_forward_pass_and_gradients(
             images_splits[device_num], labels_splits[device_num], nclass,
             phase_train, device_num, input_data_type, data_type, input_nchan,
             use_synthetic_gpu_images, gpu_copy_stage_ops, gpu_compute_stage_ops,
             gpu_grad_stage_ops)
-        sparsity_util.add_sparsity_summary_gradients(results['loss'],
+
+        # Build up the retrieve list for analyzing the intermediate results
+        grad_retrieve_list = sparsity_util.add_sparsity_summary_gradients(results['loss'],
             tensor_list)
+        for key in sparsities:
+          retrieve_list.append(key)
+          retrieve_list.append(sparsities[key])
+        retrieve_list = retrieve_list + grad_retrieve_list
+
         if phase_train:
           losses.append(results['loss'])
           device_grads.append(results['gradvars'])
@@ -843,7 +871,6 @@ class BenchmarkCNN(object):
 
     training_ops = []
     for d, device in enumerate(apply_gradient_devices):
-      print(device)
       with tf.device(device):
         total_loss = tf.reduce_mean(losses)
         avg_grads = self.variable_mgr.get_gradients_to_apply(d, gradient_state)
@@ -885,8 +912,6 @@ class BenchmarkCNN(object):
 
         self.variable_mgr.append_apply_gradients_ops(
             gradient_state, opt, clipped_grads, training_ops)
-        for var in tf.trainable_variables():
-          sparsity_util.add_sparsity_summary(var)
     train_op = tf.group(*(training_ops + update_ops + extra_nccl_ops))
 
     with tf.device(self.cpu_device):
@@ -901,7 +926,7 @@ class BenchmarkCNN(object):
             tf.summary.histogram(var.op.name, var)
     fetches['train_op'] = train_op
     fetches['total_loss'] = total_loss
-    return (enqueue_ops, fetches)
+    return (enqueue_ops, fetches, retrieve_list)
 
   def add_forward_pass_and_gradients(
       self, host_images, host_labels, nclass, phase_train, device_num,
@@ -1002,7 +1027,7 @@ class BenchmarkCNN(object):
       gradvars = list(zip(grads, param_refs))
       results['loss'] = loss
       results['gradvars'] = gradvars
-      return results, network.tensor_list_for_sparsity_analysis
+      return results, network.tensor_list_for_sparsity_analysis, network.sparsities
 
   def get_image_preprocessor(self):
     """Returns the image preprocessor to used, based on the model.

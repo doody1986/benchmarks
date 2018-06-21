@@ -17,6 +17,7 @@
 from __future__ import print_function
 
 from collections import defaultdict
+import collections
 import contextlib
 
 import numpy as np
@@ -51,6 +52,7 @@ class ConvNetBuilder(object):
     self.aux_top_layer = None
     self.aux_top_size = 0
     self.tensor_list_for_sparsity_analysis = []
+    self.sparsities = collections.OrderedDict()
 
   @contextlib.contextmanager
   def switch_to_aux_top_layer(self):
@@ -156,7 +158,7 @@ class ConvNetBuilder(object):
         raise KeyError('Invalid activation type \'%s\'' % activation)
       self.top_layer = conv1
       self.top_size = num_out_channels
-      sparsity_util.add_sparsity_summary(conv1)
+      self.sparsities[conv1] = sparsity_util.add_sparsity_summary(conv1)
       self.tensor_list_for_sparsity_analysis.append(conv1)
       return conv1
 
@@ -181,7 +183,7 @@ class ConvNetBuilder(object):
         data_format=self.channel_pos,
         name=name)
     self.top_layer = pool
-    sparsity_util.add_sparsity_summary(pool)
+    self.sparsities[pool] = sparsity_util.add_sparsity_summary(pool)
     self.tensor_list_for_sparsity_analysis.append(pool)
     return pool
 
@@ -206,7 +208,7 @@ class ConvNetBuilder(object):
         data_format=self.channel_pos,
         name=name)
     self.top_layer = pool
-    sparsity_util.add_sparsity_summary(pool)
+    self.sparsities[pool] = sparsity_util.add_sparsity_summary(pool)
     self.tensor_list_for_sparsity_analysis.append(pool)
     return pool
 
@@ -248,7 +250,7 @@ class ConvNetBuilder(object):
         raise KeyError('Invalid activation type \'%s\'' % activation)
       self.top_layer = affine1
       self.top_size = num_out_channels
-      sparsity_util.add_sparsity_summary(affine1)
+      self.sparsities[affine1] = sparsity_util.add_sparsity_summary(affine1)
       self.tensor_list_for_sparsity_analysis.append(affine1)
       return affine1
 
