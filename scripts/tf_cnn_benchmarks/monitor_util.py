@@ -70,6 +70,13 @@ def feature_map_extraction(tensor, batch_index, channel_index):
   extracted_subarray[np.nonzero(extracted_subarray)] = 1
   return extracted_subarray
 
+def animate(i, tensor_name, data_dict):
+  label = 'Local step in monitoring period: {0}'.format(i)
+  matrix = data_dict[tensor_name][i] 
+  mesh = ax.pcolormesh(matrix, cmap=cmap)
+  ax.set_xlabel(label)
+  return mesh,
+
 
 class SparsityMonitor():
   """Logs loss and runtime."""
@@ -80,12 +87,12 @@ class SparsityMonitor():
     self._sparsity_threshold = sparsity_threshold
     self._log_animation = log_animation
     self._batch_idx = batch_idx
-
-  def before(self):
+    self.data_dict = collections.OrderedDict()
     self._internal_index_keeper = collections.OrderedDict()
     self._local_step = collections.OrderedDict()
 
-  def after(self, retrieve_list, sess):
+
+  def collect(self, results, retrieve_list):
     self._data_list = []
     self._sparsity_list = []
     #self._eval_results = []
@@ -96,10 +103,10 @@ class SparsityMonitor():
     for i in range(len(retrieve_list)):
       if i % 2 == 0:
         # tensor
-        self._data_list.append(retrieve_list[i].eval(session=sess))
+        self._data_list.append(results[retrieve_list[i].name])
       if i % 2 == 1:
         # sparsity
-        self._sparsity_list.append(retrieve_list[i].eval(session=sess))
+        self._sparsity_list.append(results[retrieve_list[i].name])
     assert len(self._sparsity_list) == len(retrieve_list) / 2
     assert len(self._data_list) == len(retrieve_list) / 2
     num_data = len(self._data_list)
@@ -114,7 +121,7 @@ class SparsityMonitor():
         if self._local_step[tensor_name] == self._monitor_interval and \
            self._log_animation:
           ani = animation.FuncAnimation(fig, animate, frames=self._monitor_interval,
-                                        fargs=(tensor_name,),
+                                        fargs=(tensor_name, self.data_dict,),
                                         interval=500, repeat=False, blit=True)                        
           
           figure_name = tensor_name.replace('/', '_').replace(':', '_')
@@ -128,9 +135,9 @@ class SparsityMonitor():
         print (format_str % (self._local_step[tensor_name], tensor_name,
                              sparsity, 0.0))
         self._internal_index_keeper[tensor_name] = get_non_zero_index(self._data_list[i], shape)
-        if tensor_name not in data_dict:
-          data_dict[tensor_name] = []
-        data_dict[tensor_name].append(feature_map_extraction(self._data_list[i], batch_idx, channel_idx))
+        if tensor_name not in self.data_dict:
+          self.data_dict[tensor_name] = []
+        self.data_dict[tensor_name].append(feature_map_extraction(self._data_list[i], batch_idx, channel_idx))
         self._local_step[tensor_name] += 1
       elif tensor_name in self._local_step and self._local_step[tensor_name] > 0:
         # Inside the monitoring interval
@@ -141,7 +148,7 @@ class SparsityMonitor():
         self._internal_index_keeper[tensor_name] = local_index_list
         print (format_str % (self._local_step[tensor_name], tensor_name,
                              sparsity, diff_percentage))
-        data_dict[tensor_name].append(feature_map_extraction(self._data_list[i], batch_idx, channel_idx))
+        self.data_dict[tensor_name].append(feature_map_extraction(self._data_list[i], batch_idx, channel_idx))
         self._local_step[tensor_name] += 1
       else:
         continue

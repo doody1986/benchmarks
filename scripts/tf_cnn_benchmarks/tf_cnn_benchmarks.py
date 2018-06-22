@@ -395,7 +395,7 @@ def benchmark_one_step(sess, fetches, step, batch_size,
     trace = timeline.Timeline(step_stats=run_metadata.step_stats)
     with open(trace_filename, 'w') as trace_file:
       trace_file.write(trace.generate_chrome_trace_format(show_memory=True))
-  return summary_str
+  return results, summary_str
 
 
 def get_perf_timing_str(batch_size, step_train_times, scale=1):
@@ -737,11 +737,10 @@ class BenchmarkCNN(object):
           fetch_summary = summary_op
         else:
           fetch_summary = None
-        self.sparsity_monitor.before()
-        summary_str = benchmark_one_step(
+        results, summary_str = benchmark_one_step(
             sess, fetches, local_step, self.batch_size, step_train_times,
             self.trace_filename, fetch_summary)
-        self.sparsity_monitor.after(retrieve_list, sess)
+        self.sparsity_monitor.collect(results, retrieve_list)
         if summary_str is not None and is_chief:
           sv.summary_computed(sess, summary_str)
         local_step += 1
@@ -926,6 +925,9 @@ class BenchmarkCNN(object):
             tf.summary.histogram(var.op.name, var)
     fetches['train_op'] = train_op
     fetches['total_loss'] = total_loss
+    for tensor in retrieve_list:
+      fetches[tensor.name] = tensor
+
     return (enqueue_ops, fetches, retrieve_list)
 
   def add_forward_pass_and_gradients(
