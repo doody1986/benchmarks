@@ -24,6 +24,9 @@ import matplotlib.animation as animation
 from matplotlib.colors import ListedColormap
 from matplotlib.colors import BoundaryNorm
 
+cmap = ListedColormap(['black', 'red'])
+fig, ax = plt.subplots()
+
 def get_non_zero_index(a, shape):
   raw_index = np.where(a != 0)
   n_dim = len(raw_index)
