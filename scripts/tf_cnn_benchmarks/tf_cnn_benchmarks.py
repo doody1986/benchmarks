@@ -737,11 +737,11 @@ class BenchmarkCNN(object):
           fetch_summary = summary_op
         else:
           fetch_summary = None
-        self.sparsity_monitor.before(sess)
+        self.sparsity_monitor.before()
         summary_str = benchmark_one_step(
             sess, fetches, local_step, self.batch_size, step_train_times,
             self.trace_filename, fetch_summary)
-        self.sparsity_monitor.after(retrieve_list)
+        self.sparsity_monitor.after(retrieve_list, sess)
         if summary_str is not None and is_chief:
           sv.summary_computed(sess, summary_str)
         local_step += 1

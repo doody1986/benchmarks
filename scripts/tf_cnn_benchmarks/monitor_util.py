@@ -81,25 +81,25 @@ class SparsityMonitor():
     self._log_animation = log_animation
     self._batch_idx = batch_idx
 
-  def before(self, sess):
+  def before(self):
     self._internal_index_keeper = collections.OrderedDict()
     self._local_step = collections.OrderedDict()
-    self._sess = sess
 
-  def after(self, retrieve_list):
+  def after(self, retrieve_list, sess):
     self._data_list = []
     self._sparsity_list = []
-    self._eval_results = []
-    for tensor in retrieve_list:
-      self._eval_results.append(tensor.eval(session=self._sess))
+    #self._eval_results = []
+    #for tensor in retrieve_list:
+    #  print("Evaluate tensor: ", tensor.name)
+    #  self._eval_results.append(tensor.eval(session=sess))
 
-    for i in range(len(self._eval_results)):
+    for i in range(len(retrieve_list)):
       if i % 2 == 0:
         # tensor
-        self._data_list.append(self._eval_results[i])
+        self._data_list.append(retrieve_list[i].eval(session=sess))
       if i % 2 == 1:
         # sparsity
-        self._sparsity_list.append(self._eval_results[i])
+        self._sparsity_list.append(retrieve_list[i].eval(session=sess))
     assert len(self._sparsity_list) == len(retrieve_list) / 2
     assert len(self._data_list) == len(retrieve_list) / 2
     num_data = len(self._data_list)
