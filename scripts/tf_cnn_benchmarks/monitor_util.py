@@ -62,12 +62,15 @@ def calc_index_diff_percentage(index_list, ref_index_list, sparsity, all_counts)
   percentage = float(diff_counts) / all_counts
   return percentage
 
-def feature_map_extraction(tensor, batch_index, channel_index):
+def feature_map_extraction(tensor, data_format, batch_index, channel_index):
   # The feature map returned will be represented in a context of matrix
   # sparsity (1 or 0), in which 1 means non-zero value, 0 means zero
   n_dim = len(tensor.shape)
   if n_dim == 4:
-    extracted_subarray = tensor[batch_index,:,:,channel_index]
+    if data_format == "NCHW":
+      extracted_subarray = tensor[batch_index,channel_index,:,:]
+    elif data_format == "NHWC":
+      extracted_subarray = tensor[batch_index,:,:,channel_index]
   if n_dim == 2:
     extracted_subarray = tensor
   extracted_subarray[np.nonzero(extracted_subarray)] = 1
@@ -84,8 +87,9 @@ def animate(i, tensor_name, data_dict):
 class SparsityMonitor():
   """Logs loss and runtime."""
 
-  def __init__(self, monitor_interval,
+  def __init__(self, data_format, monitor_interval,
              sparsity_threshold, log_animation, batch_idx):
+    self._data_format = data_format
     self._monitor_interval = monitor_interval
     self._sparsity_threshold = sparsity_threshold
     self._log_animation = log_animation
@@ -140,7 +144,10 @@ class SparsityMonitor():
         self._internal_index_keeper[tensor_name] = get_non_zero_index(self._data_list[i], shape)
         if tensor_name not in self.data_dict:
           self.data_dict[tensor_name] = []
-        self.data_dict[tensor_name].append(feature_map_extraction(self._data_list[i], batch_idx, channel_idx))
+        self.data_dict[tensor_name].append(feature_map_extraction(\
+                                            self._data_list[i],\
+                                            self._data_format,\
+                                            batch_idx, channel_idx))
         self._local_step[tensor_name] += 1
       elif tensor_name in self._local_step and self._local_step[tensor_name] > 0:
         # Inside the monitoring interval
@@ -151,7 +158,10 @@ class SparsityMonitor():
         self._internal_index_keeper[tensor_name] = local_index_list
         print (format_str % (self._local_step[tensor_name], tensor_name,
                              sparsity, diff_percentage))
-        self.data_dict[tensor_name].append(feature_map_extraction(self._data_list[i], batch_idx, channel_idx))
+        self.data_dict[tensor_name].append(feature_map_extraction(
+                                            self._data_list[i],\
+                                            self._data_format,\
+                                            batch_idx, channel_idx))
         self._local_step[tensor_name] += 1
       else:
         continue

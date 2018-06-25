@@ -556,7 +556,8 @@ class BenchmarkCNN(object):
     self.image_preprocessor = self.get_image_preprocessor()
     self.init_global_step = 0
 
-    self.sparsity_monitor = monitor_util.SparsityMonitor(FLAGS.monitor_interval,\
+    self.sparsity_monitor = monitor_util.SparsityMonitor(FLAGS.data_format,\
+                                         FLAGS.monitor_interval,\
                                          FLAGS.sparsity_threshold,\
                                          FLAGS.log_animation,\
                                          FLAGS.batch_idx)
