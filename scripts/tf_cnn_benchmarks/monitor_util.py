@@ -76,7 +76,7 @@ def feature_map_extraction(tensor, data_format, batch_index, channel_index):
   extracted_subarray[np.nonzero(extracted_subarray)] = 1
   return extracted_subarray
 
-def animate(i, tensor_name, data_dict):
+def animate(i, ax, tensor_name, data_dict):
   label = 'Local step in monitoring period: {0}'.format(i)
   matrix = data_dict[tensor_name][i] 
   mesh = ax.pcolormesh(matrix, cmap=cmap)
@@ -91,21 +91,34 @@ class SparsityMonitor():
              sparsity_threshold, log_animation, batch_idx):
     self._data_format = data_format
     self._monitor_interval = monitor_interval
-    self._sparsity_threshold = sparsity_threshold
+    self._sparsity_threshold_list = np.arange(sparsity_threshold, 1, 0.1)
+    self._initial_sparsity_threshold = self._sparsity_threshold_list[0]
     self._log_animation = log_animation
     self._batch_idx = batch_idx
-    self.data_dict = collections.OrderedDict()
+    self._extracted_data_dict = collections.OrderedDict()
     self._internal_index_keeper = collections.OrderedDict()
     self._local_step = collections.OrderedDict()
 
+    self._current_threshold_idx = collections.OrderedDict()
+    self._sparsity_threshold = collections.OrderedDict()
+    self._fd_dict = collections.OrderedDict()
+    self._finished = collections.OrderedDict()
+
+  def _reset(self, tensor_name):
+    if tensor_name in self._extracted_data_dict:
+      self._extracted_data_dict[tensor_name] = []
+    if tensor_name in self._internal_index_keeper:
+      self._internal_index_keeper[tensor_name] = []
+    if tensor_name in self._local_step:
+      self._local_step[tensor_name] = 0
+    self._current_threshold_idx[tensor_name] += 1
+    self._sparsity_threshold[tensor_name] = \
+      self._sparsity_threshold_list[self._current_threshold_idx[tensor_name]]
+    self._fd_dict[tensor_name] = None
 
   def collect(self, results, retrieve_list):
     self._data_list = []
     self._sparsity_list = []
-    #self._eval_results = []
-    #for tensor in retrieve_list:
-    #  print("Evaluate tensor: ", tensor.name)
-    #  self._eval_results.append(tensor.eval(session=sess))
 
     for i in range(len(retrieve_list)):
       if i % 2 == 0:
@@ -117,38 +130,76 @@ class SparsityMonitor():
     assert len(self._sparsity_list) == len(retrieve_list) / 2
     assert len(self._data_list) == len(retrieve_list) / 2
     num_data = len(self._data_list)
-    format_str = ('local_step: %d %s: sparsity = %.2f difference percentage = %.2f')
+    format_str = ('local_step: %d %s: sparsity = %.2f difference percentage = %.2f\n')
     for i in range(num_data):
       sparsity = self._sparsity_list[i]
       shape = retrieve_list[2*i].get_shape()
       tensor_name = retrieve_list[2*i].name
       batch_idx = self._batch_idx
       channel_idx = 0
+      if tensor_name in self._finished and self._finished[tensor_name]:
+        continue
+      if sparsity < self._initial_sparsity_threshold:
+        continue
+
       if tensor_name in self._local_step:
         if self._local_step[tensor_name] == self._monitor_interval and \
            self._log_animation:
+          fig, ax = plt.subplots()
           ani = animation.FuncAnimation(fig, animate, frames=self._monitor_interval,
-                                        fargs=(tensor_name, self.data_dict,),
+                                        fargs=(ax, tensor_name, self._extracted_data_dict,),
                                         interval=500, repeat=False, blit=True)                        
           
-          figure_name = tensor_name.replace('/', '_').replace(':', '_')
+          figure_name = tensor_name.replace('/', '_').replace(':', '_') +\
+                        str(int(self._sparsity_threshold[tensor_name] * 100))
           ani.save(figure_name+'.gif', dpi=80, writer='imagemagick')
           self._local_step[tensor_name] += 1
           continue
         if self._local_step[tensor_name] >= self._monitor_interval:
+          self._fd_dict[tensor_name].close()
+          if self._current_threshold_idx[tensor_name] < (len(self._sparsity_threshold_list)-1):
+            self._reset(tensor_name)
+          elif self._current_threshold_idx[tensor_name] == (len(self._sparsity_threshold_list)-1):
+            self._finished[tensor_name] = True
           continue
-      if tensor_name not in self._local_step and sparsity > self._sparsity_threshold:
+      if tensor_name not in self._local_step and sparsity > self._initial_sparsity_threshold:
+        # Initial setup for each structure
         self._local_step[tensor_name] = 0
-        print (format_str % (self._local_step[tensor_name], tensor_name,
-                             sparsity, 0.0))
+        self._current_threshold_idx[tensor_name] = 0
+        self._sparsity_threshold[tensor_name] = self._sparsity_threshold_list[self._current_threshold_idx[tensor_name]]
+        self._finished[tensor_name] = False
         self._internal_index_keeper[tensor_name] = get_non_zero_index(self._data_list[i], shape)
-        if tensor_name not in self.data_dict:
-          self.data_dict[tensor_name] = []
-        self.data_dict[tensor_name].append(feature_map_extraction(\
+        if tensor_name not in self._extracted_data_dict:
+          self._extracted_data_dict[tensor_name] = []
+        self._extracted_data_dict[tensor_name].append(feature_map_extraction(\
                                             self._data_list[i],\
                                             self._data_format,\
                                             batch_idx, channel_idx))
         self._local_step[tensor_name] += 1
+        if tensor_name not in self._fd_dict:
+          file_name = tensor_name.replace('/', '_').replace(':', '_') +\
+                      str(int(self._initial_sparsity_threshold * 100)) + '.txt'
+          self._fd_dict[tensor_name] = open(file_name, 'w')
+        self._fd_dict[tensor_name].write(
+                      format_str % (self._local_step[tensor_name], tensor_name,
+                      sparsity, 0.0))
+      elif tensor_name in self._local_step and self._local_step[tensor_name] == 0\
+           and sparsity > self._sparsity_threshold[tensor_name]:
+        # After reset
+        self._internal_index_keeper[tensor_name] = get_non_zero_index(self._data_list[i], shape)
+        assert(self._extracted_data_dict[tensor_name] == [])
+        self._extracted_data_dict[tensor_name].append(feature_map_extraction(\
+                                            self._data_list[i],\
+                                            self._data_format,\
+                                            batch_idx, channel_idx))
+        self._local_step[tensor_name] += 1
+        file_name = tensor_name.replace('/', '_').replace(':', '_') +\
+                    str(int(self._sparsity_threshold[tensor_name] * 100)) + '.txt'
+        assert(self._fd_dict[tensor_name] == None)
+        self._fd_dict[tensor_name] = open(file_name, 'w')
+        self._fd_dict[tensor_name].write(
+                      format_str % (self._local_step[tensor_name], tensor_name,
+                      sparsity, 0.0))
       elif tensor_name in self._local_step and self._local_step[tensor_name] > 0:
         # Inside the monitoring interval
         data_length = self._data_list[i].size
@@ -156,12 +207,14 @@ class SparsityMonitor():
         diff_percentage = calc_index_diff_percentage(local_index_list,
           self._internal_index_keeper[tensor_name], sparsity, data_length)
         self._internal_index_keeper[tensor_name] = local_index_list
-        print (format_str % (self._local_step[tensor_name], tensor_name,
-                             sparsity, diff_percentage))
-        self.data_dict[tensor_name].append(feature_map_extraction(
+        self._extracted_data_dict[tensor_name].append(feature_map_extraction(
                                             self._data_list[i],\
                                             self._data_format,\
                                             batch_idx, channel_idx))
         self._local_step[tensor_name] += 1
+        self._fd_dict[tensor_name].write(
+                      format_str % (self._local_step[tensor_name], tensor_name,
+                      sparsity, diff_percentage))
       else:
         continue
+
